@@ -349,21 +349,48 @@ open class JavaLanguageFrontend(ctx: TranslationContext, language: Language<Java
         return null
     }
 
-    fun getQualifiedNameFromImports(className: String?): Name? {
-        if (context != null && className != null) {
-            val name = parseName(className)
+    /**
+     * Cache of import names keyed by their local (simple) name. Built once per file to avoid
+     * iterating all imports on every call to [getQualifiedNameFromImports].
+     */
+    private var importLookupCache: Map<String, Name>? = null
+    private var importLookupContext: CompilationUnit? = null
 
-            // See if we can make the qualifier more precise using the imports
-            for (importDeclaration in context?.imports ?: listOf()) {
-                // Skip asterisk imports, otherwise the name comparison below will get confused
-                // and we are looking for directly imported classes here only
+    private fun getImportLookup(): Map<String, Name> {
+        val ctx = context
+        if (ctx != null && ctx !== importLookupContext) {
+            val map = mutableMapOf<String, Name>()
+            for (importDeclaration in ctx.imports) {
                 if (importDeclaration.isAsterisk) {
                     continue
                 }
-
                 val importName = parseName(importDeclaration.nameAsString)
-                if (importName.endsWith(name)) {
-                    return importName
+                // Key by the local (simple) name of the import
+                map[importName.localName] = importName
+            }
+            importLookupCache = map
+            importLookupContext = ctx
+        }
+        return importLookupCache ?: emptyMap()
+    }
+
+    fun getQualifiedNameFromImports(className: String?): Name? {
+        if (context != null && className != null) {
+            val name = parseName(className)
+            val lookup = getImportLookup()
+
+            // Fast path: direct match by local name
+            val direct = lookup[name.localName]
+            if (direct != null && direct.endsWith(name)) {
+                return direct
+            }
+
+            // Fallback: check all imports for suffix match (handles multi-part names)
+            if (name.localName != className) {
+                for ((_, importName) in lookup) {
+                    if (importName.endsWith(name)) {
+                        return importName
+                    }
                 }
             }
         }

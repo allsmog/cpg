@@ -864,15 +864,24 @@ interface GoStandardLibrary : Library {
     }
 }
 
-// TODO: optimize to use iterators instead
+/**
+ * Cache for lists built from JNA calls. Since the Go AST is immutable after parsing, we can safely
+ * cache lists. The key is a pair of (native pointer address, numFunc reference) to distinguish
+ * different list properties on the same node (e.g., File.imports vs File.decls).
+ */
+private val listCache = HashMap<Pair<Long, Any>, List<*>>()
+
+@Suppress("UNCHECKED_CAST")
 fun <T : PointerType, S : PointerType> T.list(
     numFunc: (T) -> Int,
     itemFunc: (T, Int) -> S,
 ): MutableList<S> {
-    val list = mutableListOf<S>()
-    for (i in 0 until numFunc(this)) {
-        list += itemFunc(this, i)
-    }
-
-    return list
+    val key = Pair(this.pointer?.let { com.sun.jna.Pointer.nativeValue(it) } ?: 0L, numFunc)
+    return (listCache.getOrPut(key) {
+        val list = mutableListOf<S>()
+        for (i in 0 until numFunc(this)) {
+            list += itemFunc(this, i)
+        }
+        list
+    } as MutableList<S>)
 }

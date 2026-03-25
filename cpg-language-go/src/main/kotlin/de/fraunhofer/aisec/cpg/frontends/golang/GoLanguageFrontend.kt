@@ -36,6 +36,7 @@ import de.fraunhofer.aisec.cpg.graph.*
 import de.fraunhofer.aisec.cpg.graph.declarations.DeclarationSequence
 import de.fraunhofer.aisec.cpg.graph.declarations.Import
 import de.fraunhofer.aisec.cpg.graph.declarations.Method
+import de.fraunhofer.aisec.cpg.graph.declarations.Namespace
 import de.fraunhofer.aisec.cpg.graph.declarations.Record
 import de.fraunhofer.aisec.cpg.graph.declarations.TranslationUnit
 import de.fraunhofer.aisec.cpg.graph.expressions.Literal
@@ -159,10 +160,13 @@ class GoLanguageFrontend(ctx: TranslationContext, language: Language<GoLanguageF
 
         val std = GoStandardLibrary.INSTANCE
 
-        // Try to parse a possible go.mod
+        // Try to parse a possible go.mod (cached to avoid re-parsing for every file)
         val goModFile = topLevel.resolve("go.mod")
         if (goModFile.exists()) {
-            currentModule = Modfile.parse(goModFile.absolutePath, goModFile.readText())
+            currentModule =
+                moduleCache.getOrPut(goModFile.absolutePath) {
+                    Modfile.parse(goModFile.absolutePath, goModFile.readText())
+                }
         }
 
         val fset = std.NewFileSet()
@@ -206,6 +210,9 @@ class GoLanguageFrontend(ctx: TranslationContext, language: Language<GoLanguageF
             }
 
             p.path = packagePath.path
+
+            // Register in the namespace path index for fast import resolution
+            namespacesByPath[packagePath.path] = p
         } catch (ex: IllegalArgumentException) {
             log.error(
                 "Could not relativize package path to top level. Cannot set package path.",
@@ -428,6 +435,15 @@ class GoLanguageFrontend(ctx: TranslationContext, language: Language<GoLanguageF
     }
 
     companion object {
+        /** Cache for parsed go.mod files, keyed by absolute path. */
+        private val moduleCache = mutableMapOf<String, GoStandardLibrary.Modfile.File?>()
+
+        /**
+         * Index of namespaces by their package path (e.g., "encoding/json"). This avoids O(n) scope
+         * manager filtering when resolving Go imports.
+         */
+        val namespacesByPath = mutableMapOf<String, Namespace>()
+
         /**
          * All possible goos values. See
          * https://github.com/golang/go/blob/release-branch.go1.21/src/go/build/syslist.go#L11

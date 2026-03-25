@@ -309,11 +309,12 @@ open class CXXLanguageFrontend(ctx: TranslationContext, language: Language<CXXLa
         if (fLocation == null) return null
         val lineBreaks: IntArray =
             try {
-                val fLoc = getField(fLocation.javaClass, "fLocationCtx")
+                val fLoc = cachedGetField(fLocation.javaClass, "fLocationCtx")
                 fLoc.trySetAccessible()
                 val locCtx = fLoc[fLocation]
-                val fLineOffsets = getField(locCtx.javaClass, "fLineOffsets")
-                val getLineNumber = getMethod(locCtx.javaClass, "getLineNumber", Int::class.java)
+                val fLineOffsets = cachedGetField(locCtx.javaClass, "fLineOffsets")
+                val getLineNumber =
+                    cachedGetMethod(locCtx.javaClass, "getLineNumber", Int::class.java)
                 fLineOffsets.trySetAccessible()
 
                 // force to cache line numbers, this calls computeLineOffsets internally
@@ -458,6 +459,32 @@ open class CXXLanguageFrontend(ctx: TranslationContext, language: Language<CXXLa
             }
             throw e
         }
+    }
+
+    /**
+     * Cached version of [getField] that avoids repeated reflection lookups for the same class/field
+     * combination. This is called once per AST node in [regionOf], so caching provides a
+     * significant speedup for large files.
+     */
+    @Throws(NoSuchFieldException::class)
+    private fun cachedGetField(type: Class<*>, fieldName: String): Field {
+        val key = type.name + "#" + fieldName
+        return fieldCache.getOrPut(key) { getField(type, fieldName) }
+    }
+
+    /**
+     * Cached version of [getMethod] that avoids repeated reflection lookups for the same
+     * class/method combination.
+     */
+    @Throws(NoSuchMethodException::class)
+    private fun cachedGetMethod(
+        type: Class<*>,
+        methodName: String,
+        vararg parameterTypes: Class<*>,
+    ): ReflectMethod {
+        val key =
+            type.name + "#" + methodName + "(" + parameterTypes.joinToString(",") { it.name } + ")"
+        return methodCache.getOrPut(key) { getMethod(type, methodName, *parameterTypes) }
     }
 
     override fun setComment(node: Node, astNode: IASTNode) {
@@ -802,6 +829,12 @@ open class CXXLanguageFrontend(ctx: TranslationContext, language: Language<CXXLa
 
     companion object {
         private val LOGGER = LoggerFactory.getLogger(CXXLanguageFrontend::class.java)
+
+        /** Cache for reflective field lookups used in [regionOf]. */
+        private val fieldCache = HashMap<String, Field>()
+
+        /** Cache for reflective method lookups used in [regionOf]. */
+        private val methodCache = HashMap<String, ReflectMethod>()
 
         private fun explore(node: IASTNode, indent: Int) {
             val children = node.children

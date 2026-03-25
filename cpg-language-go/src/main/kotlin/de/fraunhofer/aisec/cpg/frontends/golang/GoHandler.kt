@@ -28,9 +28,7 @@ package de.fraunhofer.aisec.cpg.frontends.golang
 import de.fraunhofer.aisec.cpg.frontends.Handler
 import de.fraunhofer.aisec.cpg.graph.Node
 import de.fraunhofer.aisec.cpg.graph.ProblemNode
-import de.fraunhofer.aisec.cpg.graph.declarations.Namespace
 import de.fraunhofer.aisec.cpg.graph.expressions.Literal
-import de.fraunhofer.aisec.cpg.graph.scopes.NamespaceScope
 import de.fraunhofer.aisec.cpg.helpers.Util
 import java.util.function.Supplier
 
@@ -94,16 +92,9 @@ abstract class GoHandler<ResultNode : Node?, HandlerNode : GoStandardLibrary.Ast
 
             // While it is convention that the respective Go package is named after the last path in
             // the import name, this is purely a convention. We therefore need to find out the real
-            // package name. Currently, we do not support parallel parsing, so the order of imports
-            // might be suitable to look up the specific package in the scope manager. In the
-            // future, we might need a better solution.
-            val namespace =
-                frontend.scopeManager
-                    .filterScopes {
-                        it is NamespaceScope && (it.astNode as? Namespace)?.path == filename
-                    }
-                    .firstOrNull()
-                    ?.astNode as? Namespace
+            // package name. We use the namespace path index for O(1) lookup instead of scanning
+            // all scopes.
+            val namespace = GoLanguageFrontend.namespacesByPath[filename]
 
             if (namespace != null) {
                 // We can directly take the "real" namespace name then

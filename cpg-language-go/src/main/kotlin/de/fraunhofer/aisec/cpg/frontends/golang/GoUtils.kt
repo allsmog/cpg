@@ -33,6 +33,9 @@ import java.util.concurrent.TimeUnit
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
+/** Cache for build constraint lines read from file headers, keyed by absolute file path. */
+private val buildLineCache = mutableMapOf<String, String?>()
+
 /**
  * This functions checks whether the file specified in [file] should be processed in the
  * [GoLanguageFrontend]. It mainly checks for build constraints, which can either be part of the
@@ -73,14 +76,16 @@ internal fun shouldBeBuild(file: File, symbols: Map<String, String>): Boolean {
         return false
     }
 
-    // Next, we need to peek into the file, to see whether any build tags are present. The
-    // fastest way
-    // to do that is to read the file and look for a go:build line
+    // Next, we need to peek into the file, to see whether any build tags are present. Cache the
+    // parsed build line to avoid re-reading files during project setup (where shouldBeBuild is
+    // called on many files, potentially more than once).
     val goBuildLine =
-        file
-            .bufferedReader()
-            .useLines { lines -> lines.take(50).toList() }
-            .firstOrNull { it.startsWith("//go:build") } ?: return true
+        buildLineCache.getOrPut(file.absolutePath) {
+            file
+                .bufferedReader()
+                .useLines { lines -> lines.take(50).toList() }
+                .firstOrNull { it.startsWith("//go:build") }
+        } ?: return true
 
     val constraint = BuildConstraintExpression.fromString(goBuildLine.substringAfter("//go:build "))
 
